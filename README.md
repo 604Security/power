@@ -58,4 +58,4 @@ Made by `python3 tools/screenshots.py`: it runs `power` against **pretend batter
 battery.
 
 ## Credits
-By [DFIR-life](https://github.com/DFIR-life) with Claude Code. MIT licence.
+By [DFIR-life](https://github.com/DFIR-life). MIT licence.
