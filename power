@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# power: laptop charging status + the 80% battery-saver limit, in Metasploit-style status lines.
+# Run `power -h` for help.
+
+PS=${POWER_SYS:-/sys/class/power_supply}   # POWER_SYS: point at a pretend battery (for demos/tests)
+B=$PS/BAT0
+RULE=${POWER_RULE:-/etc/udev/rules.d/90-battery-limit.rules}
+START=75 END=80   # the limit: start charging below START %, stop at END %
+
+if [ -t 1 ] || [ -n "$POWER_COLOR" ]; then
+  BLUE=$'\e[1;34m' GREEN=$'\e[1;32m' RED=$'\e[1;31m' YELLOW=$'\e[1;33m' BOLD=$'\e[1m' DIM=$'\e[2m' OFF=$'\e[0m'
+fi
+info() { echo "${BLUE}[*]${OFF} $*"; }
+good() { echo "${GREEN}[+]${OFF} $*"; }
+bad()  { echo "${RED}[-]${OFF} $*"; }
+warn() { echo "${YELLOW}[!]${OFF} $*"; }
+
+usage() {
+  cat <<EOF
+${YELLOW}        ____
+       /   /
+      /   /       ${OFF}${BOLD}p o w e r${OFF}${YELLOW}
+     /   /___     ${OFF}${DIM}charging · charger · battery saver${OFF}${YELLOW}
+    /___    /
+       /   /
+      /  /
+     / /
+    //
+${OFF}
+${BOLD}power${OFF}: is the laptop charging, what charger is plugged in, and the 80% battery-saver limit.
+
+${BOLD}Usage${OFF}
+  power              show charging status and the charger
+  power on           turn the battery-saver limit ON  (charges ${START}% -> ${END}%, kept after restarts)
+  power off          turn the limit OFF (charges to 100%, kept after restarts)
+  power toggle       flip the limit to the other setting
+  power -w           keep watching (updates every 2 s, Ctrl+C to stop)
+  power -h, --help   this help
+
+${BOLD}Why${OFF}  Keeping a battery at 100% all the time wears it out. Stopping at ${END}% makes it last longer.
+     Turn the limit off before a trip when you want a full charge.
+EOF
+}
+
+limit_on() { [ "$(cat $B/charge_control_end_threshold 2>/dev/null)" != 100 ]; }
+
+set_limit() {  # $1 = on | off
+  if [ "$1" = on ]; then
+    info "Turning the battery-saver limit ${GREEN}ON${OFF} (${START}% -> ${END}%). sudo may ask for your password."
+    # the stop level must stay above the start level, so set them in a safe order
+    echo $END | sudo tee $B/charge_control_end_threshold >/dev/null &&
+      echo $START | sudo tee $B/charge_control_start_threshold >/dev/null &&
+      echo "ACTION==\"add\", SUBSYSTEM==\"power_supply\", KERNEL==\"BAT0\", ATTR{charge_control_start_threshold}=\"$START\", ATTR{charge_control_end_threshold}=\"$END\"" |
+        sudo tee $RULE >/dev/null &&
+      good "Limit is ON, and it will stay on after a restart." || bad "Couldn't turn the limit on."
+  else
+    info "Turning the battery-saver limit ${RED}OFF${OFF} (charge to 100%). sudo may ask for your password."
+    echo 100 | sudo tee $B/charge_control_end_threshold >/dev/null &&
+      echo 0 | sudo tee $B/charge_control_start_threshold >/dev/null &&
+      sudo rm -f $RULE &&
+      good "Limit is OFF: it will charge to 100%, also after a restart." || bad "Couldn't turn the limit off."
+  fi
+}
+
+status() {
+  if [ ! -d $B ]; then bad "No battery found."; return 1; fi
+  local st cap watts start end
+  st=$(cat $B/status) cap=$(cat $B/capacity)
+  watts=$(awk '{printf "%.1f", $1/1000000}' $B/power_now 2>/dev/null)
+  start=$(cat $B/charge_control_start_threshold 2>/dev/null) end=$(cat $B/charge_control_end_threshold 2>/dev/null)
+
+  case "$st" in
+    Charging)       good "Charging: ${BOLD}${cap}%${OFF}, ${watts} W going into the battery" ;;
+    Full)           good "Full: ${BOLD}${cap}%${OFF}" ;;
+    Discharging)    warn "On battery: ${BOLD}${cap}%${OFF}, using ${watts} W" ;;
+    "Not charging") info "Plugged in, not charging: ${BOLD}${cap}%${OFF} (resting at the limit)" ;;
+    *)              info "$st: ${BOLD}${cap}%${OFF}" ;;
+  esac
+  [ "$st" != Charging ] && [ "$cap" -le 15 ] 2>/dev/null && bad "Battery low! Plug in a charger."
+
+  local found=0 p
+  for p in $PS/ucsi* $PS/AC*; do
+    [ -e "$p/online" ] && [ "$(cat $p/online)" = 1 ] || continue
+    [ -e "$p/voltage_max" ] && [ -e "$p/current_max" ] || continue
+    local line w
+    line=$(awk -v v="$(cat $p/voltage_max)" -v a="$(cat $p/current_max)" \
+      'BEGIN { if (v > 0) printf "%.0f V x %.2f A = %.0f W", v/1e6, a/1e6, v*a/1e12 }')
+    [ -n "$line" ] || continue
+    found=1
+    w=${line##*= }; w=${w% W}
+    if [ "$w" -ge 65 ]; then good "Charger: $line"
+    elif [ "$w" -ge 45 ]; then info "Charger: $line ${DIM}(65 W is ideal for this laptop)${OFF}"
+    else warn "Charger: $line (too weak for this laptop: use 65 W)"; fi
+  done
+  if [ $found = 0 ]; then
+    [ "$(cat $PS/AC/online 2>/dev/null)" = 1 ] && info "Charger plugged in (wattage unknown)" || warn "No charger plugged in"
+  fi
+
+  if limit_on; then
+    good "Battery saver ${GREEN}ON${OFF}: charges ${start}% -> ${end}%"
+    echo "${DIM}    Turn it off (charge to 100%):  ${OFF}${BOLD}power off${OFF}${DIM}    help: power -h${OFF}"
+  else
+    warn "Battery saver ${RED}OFF${OFF}: charges to 100% (wears the battery faster)"
+    echo "${DIM}    Turn it on (stop at ${END}%):     ${OFF}${BOLD}power on${OFF}${DIM}     help: power -h${OFF}"
+  fi
+}
+
+case "$1" in
+  -h|--help|help) usage ;;
+  -w|--watch)     POWER_COLOR=1 exec watch -c -n2 -t "$0" ;;
+  on)             set_limit on ;;
+  off)            set_limit off ;;
+  toggle)         if limit_on; then set_limit off; else set_limit on; fi ;;
+  "")             status ;;
+  *)              bad "Unknown option: $1"; echo; usage; exit 1 ;;
+esac
