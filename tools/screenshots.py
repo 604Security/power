@@ -100,7 +100,23 @@ SCENES = [  # name, battery state, command
     ("help", dict(status="Charging", cap=54, watts=38.9, start=75, end=80, charger_w=65), ["-h"], "power -h"),
 ]
 
+def install_scene():
+    """install.sh updating an older installed copy: shows the changed lines and asks first."""
+    target = tempfile.mkdtemp()
+    old = open(os.path.join(ROOT, "power")).read().replace("START=75 END=80", "START=70 END=85")
+    open(os.path.join(target, "power"), "w").write(old)
+    env = dict(os.environ, POWER_COLOR="1", TARGET=target)
+    r = subprocess.run([os.path.join(ROOT, "install.sh")], env=env, input="y\n", capture_output=True, text=True)
+    out = r.stdout.replace("Install this? [y/N] ", "")
+    # read -p writes its question to stderr: put it back where the person sees it, with their answer
+    out = out.replace("\x1b[1;32m[+]\x1b[0m Installed", "Install this? [y/N] y\n\x1b[1;32m[+]\x1b[0m Installed")
+    out = re.sub(r"/tmp/[^ \n]+/power", "~/.local/bin/power", out)
+    shutil.rmtree(target)
+    return "\x1b[1;32m~\x1b[0m $ ./install.sh\n" + out
+
+
 os.makedirs(OUT, exist_ok=True)
+shoot("install-update", install_scene())
 for name, state, args, cmd in SCENES:
     base = tempfile.mkdtemp()
     fake_sys(base, **state)

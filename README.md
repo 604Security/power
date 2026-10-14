@@ -28,13 +28,22 @@ power -w           keep watching (every 2 s)
 power -h, --help   help
 ```
 
-## Install
+## Install (safely)
+
+`power` uses `sudo`, so don't run a copy you haven't looked at, and don't let it update itself.
 
 ```bash
-curl -o ~/.local/bin/power https://raw.githubusercontent.com/604Security/power/main/power
-chmod +x ~/.local/bin/power
+git clone https://github.com/604Security/power && cd power
+less power          # read it first
+./install.sh        # installs a read-only copy to ~/.local/bin/power
 ```
-(or clone the repo and copy `power` into any folder on your `PATH`)
+
+<p align="center"><img src="docs/screenshots/install-update.png" alt="install.sh shows the changes and asks first"></p>
+
+- Your installed copy is **frozen**: it doesn't change when this repo changes. To update, `git pull`, then
+  `./install.sh` shows **exactly which lines change** and asks before installing.
+- Check you have the reviewed release: **v1.0.0** `power` sha256 is
+  `e682000bc45c9718f1a98d88cc90b70bda2da8cc18fd5a15f0d574a535a39e14` (`sha256sum power`).
 
 ## How it works
 - Reads `/sys/class/power_supply/BAT0` (status, %, watts) and the USB-C charger (`ucsi-source-psy-*`: max volts × amps).
